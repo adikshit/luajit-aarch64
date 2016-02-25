@@ -2,7 +2,6 @@
 ** ARM64 instruction emitter.
 ** Copyright !!!TODO
 */
-#include <stdbool.h>
 
 static Reg ra_allock(ASMState *as, int32_t k, RegSet allow);
 
@@ -61,44 +60,10 @@ static uint32_t emit_isk12(A64Ins ai, int32_t n)
     return -1;
 }
 
-#define HAS_BUILTIN_CLZ      (__has_builtin(__builtin_clzll))
-#ifdef HAS_BUILTIN_CLZ
 int count_leading_zeroes(uint64_t value)
 {
-  return ((value == 0) ? 64 : __builtin_clzll(value);
+  return ((value == 0) ? 64 : __builtin_clzll(value));
 }
-#else
-int count_leading_zeroes(uint64_t value)
-{
-  int count = 0;
-  if (value == 0)
-    return 64;
-  if ((value & 0xffffffff00000000ull) == 0) {
-    count += 32;
-    value = value << 32;
-  }
-  if ((value & 0xffff000000000000ull) == 0) {
-    count += 16;
-    value = value << 16;
-  }
-  if ((value & 0xff00000000000000ull) == 0) {
-    count += 8;
-    value = value << 8;
-  }
-  if ((value & 0xf000000000000000ull) == 0) {
-    count += 4;
-    value = value << 4;
-  }
-  if ((value & 0xc000000000000000ull) == 0) {
-    count += 2;
-    value = value << 2;
-  }
-  if ((value & 0x8000000000000000ull) == 0)
-    count += 1;
-  count += (value == 0);
-  return count;
-}
-#endif
 
 /* Encode constant in K13 format for data processing instructions. */
 
@@ -112,7 +77,7 @@ static uint32_t emit_isk13(A64Ins ai, int64_t n)
 {
   int is64 = ((ai & A64I_X) != 0x0);
   uint32_t res;
-  bool neg = false;
+  int neg = 0;
   uint64_t a, n_plus_a, b, n_plus_a_minus_b, c, mask;
   int d, clz_a, clz_b, out_n, r, s;
   uint64_t multiplier, candidate;
@@ -126,7 +91,7 @@ static uint32_t emit_isk13(A64Ins ai, int64_t n)
   };
 
   if (n & 1) {
-    neg = true;
+    neg = 1;
     n = ~n;
   }
   if (!is64) {

@@ -921,7 +921,7 @@ static void asm_cnew(ASMState *as, IRIns *ir)
 
   /* Initialize gct and ctypeid. lj_mem_newgco() already sets marked. */
  {
-   bool k = (id & 0xffff) ? 0 : 1;
+   int k = (id & 0xffff) ? 0 : 1;
    Reg r = k ? RID_X1 : ra_allock(as, id, allow);
    emit_lso(as, A64I_STRBw, RID_TMP, RID_RET, offsetof(GCcdata, gct));
    emit_lso(as, A64I_STRHw, r, RID_RET, offsetof(GCcdata, ctypeid));

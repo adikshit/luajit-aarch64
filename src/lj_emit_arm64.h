@@ -2,6 +2,7 @@
 ** ARM64 instruction emitter.
 ** Copyright !!!TODO
 */
+#include <stdbool.h>
 
 static Reg ra_allock(ASMState *as, int32_t k, RegSet allow);
 
@@ -49,20 +50,133 @@ static void emit_dnm(ASMState *as, A64Ins ai, Reg rd, Reg rn, Reg rm)
 /* Encode constant in K12 format for data processing instructions. */
 static uint32_t emit_isk12(A64Ins ai, int32_t n)
 {
-    if (n >= 0 && n <= 4095)
+    if (n >= 0 && n <= 0xfff)
     {
-        return (n & 4095) << 10;
+        return (n & 0xfff) << 10;
     }
-    if ((n & 4095) == 0 && n < (4095 << 12))
+    if ((n & 0xfff) == 0 && n < (0xfff << 12))
     {
-        return (((n >> 12) & 4095) << 10) | (1 << 22);
+        return (((n >> 12) & 0xfff) << 10) | (1 << 22);
     }
     return -1;
 }
 
+#define HAS_BUILTIN_CLZ      (__has_builtin(__builtin_clzll))
+#ifdef HAS_BUILTIN_CLZ
+int count_leading_zeroes(uint64_t value)
+{
+  return ((value == 0) ? 64 : __builtin_clzll(value);
+}
+#else
+int count_leading_zeroes(uint64_t value)
+{
+  int count = 0;
+  if (value == 0)
+    return 64;
+  if ((value & 0xffffffff00000000ull) == 0) {
+    count += 32;
+    value = value << 32;
+  }
+  if ((value & 0xffff000000000000ull) == 0) {
+    count += 16;
+    value = value << 16;
+  }
+  if ((value & 0xff00000000000000ull) == 0) {
+    count += 8;
+    value = value << 8;
+  }
+  if ((value & 0xf000000000000000ull) == 0) {
+    count += 4;
+    value = value << 4;
+  }
+  if ((value & 0xc000000000000000ull) == 0) {
+    count += 2;
+    value = value << 2;
+  }
+  if ((value & 0x8000000000000000ull) == 0)
+    count += 1;
+  count += (value == 0);
+  return count;
+}
+#endif
+
 /* Encode constant in K13 format for data processing instructions. */
-static uint32_t emit_isk13(A64Ins ai, int64_t n) {
-  lua_unimpl();
+
+/* The source code has been copied from arm vixl implementation
+ * https://github.com/armvixl/vixl.git function IsImmLogical()
+ * !!TODO: We can speed up the steps by precalculating all possible
+ * encodings and then doing a binary search on that. It takes about
+ * storage space of 5k entries.
+ */
+static uint32_t emit_isk13(A64Ins ai, int64_t n)
+{
+  int is64 = ((ai & A64I_X) != 0x0);
+  uint32_t res;
+  bool neg = false;
+  uint64_t a, n_plus_a, b, n_plus_a_minus_b, c, mask;
+  int d, clz_a, clz_b, out_n, r, s;
+  uint64_t multiplier, candidate;
+  uint64_t multipliers[] = {
+      0x0000000000000001UL,
+      0x0000000100000001UL,
+      0x0001000100010001UL,
+      0x0101010101010101UL,
+      0x1111111111111111UL,
+      0x5555555555555555UL,
+  };
+
+  if (n & 1) {
+    neg = true;
+    n = ~n;
+  }
+  if (!is64) {
+    n <<= 32;
+    n |= n >> 32;
+  }
+  a = (n & -n);  //Set to lowest set bit;
+  n_plus_a = n + a;
+  b = (n_plus_a & -n_plus_a);
+  n_plus_a_minus_b = n_plus_a - b;
+  c = (n_plus_a_minus_b & -n_plus_a_minus_b);
+  if (c) { /* General case */
+    int clz_c = count_leading_zeroes(c);
+    clz_a = count_leading_zeroes(a);
+    d = clz_a - clz_c;
+    mask = (1ull << d) - 1;
+    out_n = 0;
+  }
+  else {  /* degenerate case */
+    if (!a)
+      return (uint32_t)-1;
+    else {
+      clz_a = count_leading_zeroes(a);
+      d = 64;
+      mask = ~(0ull);
+      out_n = 1;
+    }
+  }
+  if ((d & (d-1)) != 0)  /* Not a power of 2 */
+    return (uint32_t)-1;
+
+  if (((b - a) & ~mask) != 0)
+    return (uint32_t)-1;
+
+  multiplier = multipliers[count_leading_zeroes(d) - 57];
+  candidate = (b - a) * multiplier;
+  if (n != candidate)
+    return (uint32_t)-1;
+
+  clz_b  = b ? count_leading_zeroes(b) : -1;
+  s = clz_a - clz_b;
+  if (neg) {
+    s = d - s;
+    r = (clz_b + 1) & (d - 1);
+  }
+  else
+    r = (clz_a + 1) & (d - 1);
+  s = ((-d << 1) | (s - 1)) & 0x3f;
+  res = (out_n<<12) | (r << 6) | s;
+  return res;
 }
 
 /* -- Emit loads/stores --------------------------------------------------- */
